@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Spatial Theremin - Computer Vision Instrument</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #060813;
+      color: #e0f2fe;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      overflow-x: hidden;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 16px 0;
+      user-select: none;
+    }
+
+    /* Outer Studio Frame */
+    .studio-container {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      align-items: center;
+      width: 1100px;
+    }
+
+    /* Top Bar Outside Camera */
+    .top-bar {
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 2px 4px;
+    }
+    .badge {
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      padding: 8px 16px;
+      border-radius: 999px;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 700;
+      color: #38bdf8;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #38bdf8;
+      box-shadow: 0 0 10px #38bdf8;
+      animation: pulse 1.6s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.35; transform: scale(0.8); }
+    }
+    .top-sub {
+      font-size: 12px;
+      color: #64748b;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+    }
+
+    /* Main Center Workspace: Camera + Pitch Ladder Side by Side */
+    .workspace {
+      display: flex;
+      gap: 14px;
+      width: 100%;
+      height: 520px;
+    }
+
+    /* Clean Camera Viewport (Zero overlays inside!) */
+    #viewport {
+      position: relative;
+      flex: 1;
+      height: 100%;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.85), 0 0 40px rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      background: #000;
+    }
+    video { display: none; }
+    canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      transform: scaleX(-1); /* Mirror camera */
+    }
+
+    /* Fixed Pitch Ladder Column */
+    .ladder-column {
+      width: 180px;
+      height: 100%;
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      border-radius: 16px;
+      padding: 10px 10px;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 16px 45px rgba(0, 0, 0, 0.7);
+    }
+    .ladder-header {
+      height: 28px;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      color: #38bdf8;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding-bottom: 6px;
+      border-bottom: 1px solid rgba(56, 189, 248, 0.2);
+      text-shadow: 0 0 8px rgba(56, 189, 248, 0.4);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #pitch-ladder {
+      flex: 1;
+      display: flex;
+      flex-direction: column-reverse; /* Bottom is low pitch, Top is high pitch */
+      justify-content: space-between;
+      padding-top: 6px;
+    }
+
+    /* Fixed Note Boxes: Confident 8-Note Spacing */
+    .pitch-rung {
+      width: 100%;
+      height: 50px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+      border-radius: 10px;
+      background: rgba(15, 23, 42, 0.65);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: rgba(255, 255, 255, 0.45);
+      font-size: 14px;
+      font-weight: 700;
+      transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+    }
+    .rung-note {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+      font-weight: 900;
+      font-size: 17px;
+      width: 48px;
+      text-align: left;
+    }
+    .rung-midi {
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.35);
+      font-family: ui-monospace, SFMono-Regular, monospace;
+    }
+    .pitch-rung .rung-bar {
+      height: 4px;
+      width: 28px;
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 2px;
+      transition: background 0.12s ease, width 0.12s ease, box-shadow 0.12s ease;
+    }
+
+    /* Active Fixed Note Box */
+    .pitch-rung.active {
+      background: rgba(2, 132, 199, 0.4);
+      border-color: #38bdf8;
+      color: #ffffff;
+      box-shadow: 0 0 20px rgba(56, 189, 248, 0.45);
+    }
+    .pitch-rung.active .rung-note {
+      color: #38bdf8;
+      text-shadow: 0 0 12px rgba(56, 189, 248, 0.8);
+    }
+    .pitch-rung.active .rung-midi {
+      color: rgba(56, 189, 248, 0.9);
+    }
+    .pitch-rung.active .rung-bar {
+      width: 36px;
+      height: 5px;
+      background: #38bdf8;
+      box-shadow: 0 0 10px #38bdf8;
+    }
+
+    /* Indicators Deck (Below Screen Camera, Spread Out) */
+    .indicators-deck {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 14px;
+    }
+    .indicator-card {
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 14px;
+      padding: 12px 18px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 8px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    }
+    .indicator-card.note-focus {
+      border-color: rgba(56, 189, 248, 0.4);
+      background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(2, 132, 199, 0.2));
+    }
+    .indicator-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .indicator-lbl {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      font-weight: 700;
+      color: #94a3b8;
+    }
+    .indicator-badge {
+      font-size: 10px;
+      text-transform: uppercase;
+      font-weight: 700;
+      color: #38bdf8;
+      background: rgba(56, 189, 248, 0.15);
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(56, 189, 248, 0.25);
+    }
+    .indicator-val-large {
+      font-size: 32px;
+      font-weight: 900;
+      color: #38bdf8;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+      text-shadow: 0 0 16px rgba(56, 189, 248, 0.5);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .indicator-sub {
+      font-size: 14px;
+      font-weight: 800;
+      color: #f8fafc;
+      font-variant-numeric: tabular-nums;
+    }
+    .indicator-bar-track {
+      width: 100%;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .indicator-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #0284c7, #38bdf8);
+      border-radius: 999px;
+      transition: width 0.08s ease, background 0.1s ease;
+      box-shadow: 0 0 8px rgba(56, 189, 248, 0.5);
+    }
+
+    /* Bottom Control Deck */
+    .control-deck {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(15, 23, 42, 0.85);
+      padding: 10px 22px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    }
+    .deck-left {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+    .btn {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      color: #f8fafc;
+      padding: 8px 20px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn:hover { background: rgba(255, 255, 255, 0.15); }
+    .btn.active {
+      background: #0284c7;
+      border-color: #38bdf8;
+      color: #fff;
+      box-shadow: 0 0 16px rgba(56, 189, 248, 0.45);
+    }
+    .select-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #94a3b8;
+    }
+    .select-hud {
+      background: rgba(15, 23, 42, 0.95);
+      border: 1px solid rgba(56, 189, 248, 0.4);
+      color: #38bdf8;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      outline: none;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .select-hud:focus, .select-hud:hover {
+      border-color: #38bdf8;
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.4);
+    }
+    .tip-text {
+      font-size: 12px;
+      color: #64748b;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="studio-container">
+    <!-- Top Bar Outside Camera -->
+    <div class="top-bar">
+      <div class="badge">
+        <span class="dot"></span>
+        <span>SPATIAL THEREMIN • GESTURAL AV CONTROLLER</span>
+      </div>
+
+      <div class="top-sub">
+        ABLETON LIVE 12 • OSC 127.0.0.1:8765
+      </div>
+    </div>
+
+    <!-- Main Workspace: Camera + Pitch Ladder Side by Side -->
+    <div class="workspace">
+      <!-- Clean Camera Window (No text overlays inside!) -->
+      <div id="viewport">
+        <video id="webcam" playsinline autoplay></video>
+        <canvas id="output-canvas"></canvas>
+      </div>
+
+      <!-- Widen & Fixed Pitch Ladder Column -->
+      <div class="ladder-column">
+        <div class="ladder-header" id="ladder-title">C MIN PENT</div>
+        <div id="pitch-ladder"></div>
+      </div>
+    </div>
+
+    <!-- Spread Indicators Below Camera -->
+    <div class="indicators-deck">
+      <div class="indicator-card note-focus">
+        <div class="indicator-header">
+          <span class="indicator-lbl">Note & Pitch (Y)</span>
+          <span class="indicator-badge" id="badge-scale-name">C MIN PENT</span>
+        </div>
+        <div style="display: flex; align-items: baseline; justify-content: space-between;">
+          <div class="indicator-val-large" id="val-pitch">--</div>
+          <div class="indicator-sub" id="val-pitch-sub" style="font-size: 12px; color: #94a3b8;">--</div>
+        </div>
+      </div>
+
+      <div class="indicator-card">
+        <div class="indicator-header">
+          <span class="indicator-lbl">Expression (X)</span>
+          <span class="indicator-badge" id="badge-x-mode">MODULATION</span>
+        </div>
+        <div style="display: flex; align-items: baseline; justify-content: space-between;">
+          <div class="indicator-sub" id="val-expression">--</div>
+          <span style="font-size: 11px; color: #64748b; font-weight: 600;">0% ◄► 100%</span>
+        </div>
+        <div class="indicator-bar-track">
+          <div class="indicator-bar-fill" id="bar-expression"></div>
+        </div>
+      </div>
+
+      <div class="indicator-card">
+        <div class="indicator-header">
+          <span class="indicator-lbl">Pinch Dynamics</span>
+          <span class="indicator-badge" id="badge-trigger-state">IDLE</span>
+        </div>
+        <div style="display: flex; align-items: baseline; justify-content: space-between;">
+          <div class="indicator-sub" id="val-pinch">--</div>
+          <span id="label-trigger-action" style="font-size: 11px; color: #64748b; font-weight: 600;">Continuous</span>
+        </div>
+        <div class="indicator-bar-track">
+          <div class="indicator-bar-fill" id="bar-pinch"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Control Deck Outside Camera -->
+    <div class="control-deck">
+      <div class="deck-left">
+        <!-- Mode button with exact text: Theremin / Pinch Trigger -->
+        <button class="btn active" id="btn-mode">Theremin</button>
+        <button class="btn" id="btn-hold">Hold</button>
+
+        <div class="select-item">
+          <span>Scale:</span>
+          <select id="sel-scale" class="select-hud">
+            <option value="0">Min Pent</option>
+            <option value="1">Maj Pent</option>
+            <option value="2">Hirajoshi</option>
+            <option value="3">Dorian</option>
+            <option value="4">Blues</option>
+            <option value="5">Whole Tone</option>
+          </select>
+        </div>
+
+        <div class="select-item">
+          <span>Root:</span>
+          <select id="sel-root" class="select-hud">
+            <option value="0">C</option>
+            <option value="1">C#</option>
+            <option value="2">D</option>
+            <option value="3">Eb</option>
+            <option value="4">E</option>
+            <option value="5">F</option>
+            <option value="6">F#</option>
+            <option value="7">G</option>
+            <option value="8">Ab</option>
+            <option value="9">A</option>
+            <option value="10">Bb</option>
+            <option value="11">B</option>
+          </select>
+        </div>
+
+        <div class="select-item">
+          <span>Octave:</span>
+          <select id="sel-octave" class="select-hud">
+            <option value="-1">-1 (2nd Octave / Bass)</option>
+            <option value="0" selected>0 (3rd Octave / Default)</option>
+            <option value="1">+1 (4th Octave / Lead)</option>
+            <option value="2">+2 (5th Octave / High)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="tip-text">
+        Vertical Y: Pitch • Horizontal X: Filter • Pinch: Trigger
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Scale definitions matching Spatial_Theremin Max for Live device (8-note tactile span)
+    const SCALE_DEFS = [
+      { name: "Min Pent", title: "MIN PENT",   intervals: [0, 3, 5, 7, 10, 12, 15, 17] },
+      { name: "Maj Pent", title: "MAJ PENT",   intervals: [0, 2, 4, 7, 9, 12, 14, 16] },
+      { name: "Hirajoshi", title: "HIRAJOSHI", intervals: [0, 2, 3, 7, 8, 12, 14, 15] },
+      { name: "Dorian",   title: "DORIAN",     intervals: [0, 2, 3, 5, 7, 9, 10, 12] },
+      { name: "Blues",    title: "BLUES",      intervals: [0, 3, 5, 6, 7, 10, 12, 15] },
+      { name: "Whole Tone", title: "WHOLE TONE", intervals: [0, 2, 4, 6, 8, 10, 12, 14] }
+    ];
+
+    const ROOT_NAMES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
+    const NOTE_NAMES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
+
+    function midiToNote(midi) {
+      const name = NOTE_NAMES[((midi % 12) + 12) % 12];
+      const oct = Math.floor(midi / 12) - 1;
+      return `${name}${oct}`;
+    }
+
+    let currentScaleIdx = 0;
+    let currentRootIdx = 0;
+    let currentOctave = 0; // Default: 3rd octave range
+    let currentScaleNotes = [];
+
+    const ladderEl = document.getElementById("pitch-ladder");
+    const ladderTitleEl = document.getElementById("ladder-title");
+    const badgeScaleNameEl = document.getElementById("badge-scale-name");
+    const selScaleEl = document.getElementById("sel-scale");
+    const selRootEl = document.getElementById("sel-root");
+    const selOctaveEl = document.getElementById("sel-octave");
+
+    function renderScale(scaleIdx, rootIdx, octave) {
+      currentScaleIdx = Math.max(0, Math.min(SCALE_DEFS.length - 1, scaleIdx));
+      currentRootIdx = Math.max(0, Math.min(ROOT_NAMES.length - 1, rootIdx));
+      currentOctave = (typeof octave === "number") ? octave : currentOctave;
+
+      const def = SCALE_DEFS[currentScaleIdx];
+      const titleStr = `${ROOT_NAMES[currentRootIdx]} ${def.title}`;
+      ladderTitleEl.textContent = titleStr;
+      if (badgeScaleNameEl) badgeScaleNameEl.textContent = titleStr;
+
+      // Base MIDI pitch: 36 (C2) + (octave * 12)
+      // When octave is 0, notes range across 2nd, 3rd (center), and 4th octaves!
+      const baseMidi = 36 + (currentOctave * 12);
+
+      // Build 12 fixed note objects
+      currentScaleNotes = def.intervals.map(iv => {
+        const midi = baseMidi + currentRootIdx + iv;
+        return { midi: midi, name: midiToNote(midi) };
+      });
+
+      // Render fixed note boxes
+      ladderEl.innerHTML = "";
+      currentScaleNotes.forEach((n, i) => {
+        const rung = document.createElement("div");
+        rung.className = "pitch-rung";
+        rung.id = "rung-" + i;
+        rung.innerHTML = `
+          <span class="rung-note">${n.name}</span>
+          <span class="rung-midi">#${n.midi}</span>
+          <div class="rung-bar"></div>
+        `;
+        ladderEl.appendChild(rung);
+      });
+
+      selScaleEl.value = String(currentScaleIdx);
+      selRootEl.value = String(currentRootIdx);
+      selOctaveEl.value = String(currentOctave);
+    }
+
+    // Initial render: default 3rd octave
+    renderScale(0, 0, 0);
+
+    // Dropdown change handlers
+    selScaleEl.addEventListener("change", (e) => {
+      const idx = parseInt(e.target.value, 10);
+      renderScale(idx, currentRootIdx, currentOctave);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "set_scale", scale: idx }));
+      }
+    });
+
+    selRootEl.addEventListener("change", (e) => {
+      const idx = parseInt(e.target.value, 10);
+      renderScale(currentScaleIdx, idx, currentOctave);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "set_root", root: idx }));
+      }
+    });
+
+    selOctaveEl.addEventListener("change", (e) => {
+      const oct = parseInt(e.target.value, 10);
+      renderScale(currentScaleIdx, currentRootIdx, oct);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "set_octave", octave: oct }));
+      }
+    });
+
+    const video = document.getElementById("webcam");
+    const canvas = document.getElementById("output-canvas");
+    const ctx = canvas.getContext("2d");
+
+    // Mode Toggle Button: "Theremin" vs "Pinch Trigger"
+    let isContinuous = true;
+    const btnMode = document.getElementById("btn-mode");
+    btnMode.textContent = "Theremin";
+    btnMode.addEventListener("click", () => {
+      isContinuous = !isContinuous;
+      btnMode.textContent = isContinuous ? "Theremin" : "Pinch Trigger";
+      btnMode.classList.toggle("active", isContinuous);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "set_mode", mode: isContinuous ? 1 : 0 }));
+      }
+    });
+
+    // Note Hold Toggle Button (Bidirectional with Ableton Max device)
+    let isHold = false;
+    const btnHold = document.getElementById("btn-hold");
+    btnHold.addEventListener("click", () => {
+      isHold = !isHold;
+      btnHold.classList.toggle("active", isHold);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "set_hold", hold: isHold ? 1 : 0 }));
+      }
+    });
+
+    // WebSocket connection to server.js
+    let ws = null;
+    function connectWs() {
+      ws = new WebSocket("ws://" + window.location.host);
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ type: "set_mode", mode: isContinuous ? 1 : 0 }));
+      };
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === "scale_state") {
+            const sc = (typeof data.scale === "number") ? data.scale : currentScaleIdx;
+            const rt = (typeof data.root === "number") ? data.root : currentRootIdx;
+            const oc = (typeof data.octave === "number") ? data.octave : currentOctave;
+            renderScale(sc, rt, oc);
+            if (typeof data.hold === "number") {
+              isHold = (data.hold === 1);
+              btnHold.classList.toggle("active", isHold);
+            }
+          }
+        } catch (e) {}
+      };
+      ws.onclose = () => setTimeout(connectWs, 1500);
+    }
+    connectWs();
+
+    let trails = [];
+    let lastActiveIndex = -1;
+    let lastTriggerTime = 0;
+    let wasPinched = false;
+
+    function onResults(results) {
+      canvas.width = results.image.width;
+      canvas.height = results.image.height;
+
+      ctx.save();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+
+      // Dark moody filter on clean viewport
+      ctx.fillStyle = "rgba(6, 8, 19, 0.55)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        const landmarks = results.multiHandLandmarks[0];
+
+        // Coordinates
+        const indexTip = landmarks[8];
+        const thumbTip = landmarks[4];
+
+        const x = indexTip.x;
+        const y = 1.0 - indexTip.y; // Invert so Up is High
+
+        // Calculate pinch distance
+        const dx = thumbTip.x - indexTip.x;
+        const dy = thumbTip.y - indexTip.y;
+        const dz = (thumbTip.z - indexTip.z) || 0;
+        const pinchDist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        const isPinched = pinchDist < 0.085;
+
+        // Accurate finger-to-note mapping:
+        // Divide full vertical span (0 to 1) into 12 equal bands matching the adjacent ladder rungs
+        const noteCount = currentScaleNotes.length;
+        const rungIdx = Math.max(0, Math.min(noteCount - 1, Math.floor(y * noteCount)));
+        const activeNote = currentScaleNotes[rungIdx] || { name: "--" };
+
+        // Update Spread Bottom Indicators
+        document.getElementById("val-pitch").textContent = activeNote.name;
+        const valPitchSub = document.getElementById("val-pitch-sub");
+        if (valPitchSub) {
+          valPitchSub.textContent = `MIDI #${activeNote.midi || "--"} • Y: ${Math.round(y * 100)}%`;
+        }
+
+        const exprPercent = Math.round(x * 100);
+        const exprMidi = Math.round(x * 127);
+        const valExprEl = document.getElementById("val-expression");
+        if (valExprEl) valExprEl.textContent = `${exprPercent}% (Val: ${exprMidi})`;
+        const barExprEl = document.getElementById("bar-expression");
+        if (barExprEl) barExprEl.style.width = exprPercent + "%";
+
+        const badgeTriggerEl = document.getElementById("badge-trigger-state");
+        const valPinchEl = document.getElementById("val-pinch");
+        const barPinchEl = document.getElementById("bar-pinch");
+        const labelTriggerActionEl = document.getElementById("label-trigger-action");
+
+        if (isContinuous) {
+          if (badgeTriggerEl) {
+            badgeTriggerEl.textContent = "CONTINUOUS";
+            badgeTriggerEl.style.color = "#38bdf8";
+            badgeTriggerEl.style.borderColor = "rgba(56, 189, 248, 0.4)";
+          }
+          if (labelTriggerActionEl) labelTriggerActionEl.textContent = "Theremin Glide";
+          if (valPinchEl) valPinchEl.textContent = "STREAMING";
+          if (barPinchEl) {
+            barPinchEl.style.width = "100%";
+            barPinchEl.style.background = "linear-gradient(90deg, #0284c7, #38bdf8)";
+          }
+        } else {
+          const pinchFill = Math.max(5, Math.min(100, Math.round((1.0 - (pinchDist / 0.18)) * 100)));
+          if (badgeTriggerEl) {
+            badgeTriggerEl.textContent = isPinched ? "STRUCK!" : "ARMED";
+            badgeTriggerEl.style.color = isPinched ? "#f43f5e" : "#38bdf8";
+            badgeTriggerEl.style.borderColor = isPinched ? "#f43f5e" : "rgba(56, 189, 248, 0.4)";
+          }
+          if (labelTriggerActionEl) labelTriggerActionEl.textContent = isPinched ? "Triggered" : "Pinch To Play";
+          if (valPinchEl) valPinchEl.textContent = isPinched ? "PINCH STRIKE" : `Proximity: ${pinchFill}%`;
+          if (barPinchEl) {
+            barPinchEl.style.width = (isPinched ? 100 : pinchFill) + "%";
+            barPinchEl.style.background = isPinched ? "#f43f5e" : "linear-gradient(90deg, #0284c7, #38bdf8)";
+          }
+        }
+
+        // Update ladder highlight
+        document.querySelectorAll(".pitch-rung").forEach((r, i) => {
+          r.classList.toggle("active", i === rungIdx);
+        });
+
+        // Laser alignment line: fingertip horizontally straight to the right edge (points directly at the rung!)
+        const tipCanvasX = (1.0 - indexTip.x) * canvas.width; // Mirrored
+        const tipCanvasY = indexTip.y * canvas.height;
+        ctx.beginPath();
+        ctx.strokeStyle = isPinched ? "rgba(244, 63, 94, 0.65)" : "rgba(56, 189, 248, 0.45)";
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 4]);
+        ctx.moveTo(tipCanvasX, tipCanvasY);
+        ctx.lineTo(canvas.width, tipCanvasY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Trigger & Gate logic
+        const now = performance.now();
+        let shouldTrigger = false;
+        let pinchReleased = false;
+
+        if (isContinuous) {
+          if (rungIdx !== lastActiveIndex && now - lastTriggerTime > 35) {
+            shouldTrigger = true;
+          }
+        } else {
+          if (isPinched && !wasPinched && now - lastTriggerTime > 50) {
+            shouldTrigger = true;
+          } else if (!isPinched && wasPinched) {
+            pinchReleased = true;
+          }
+        }
+
+        if (shouldTrigger && ws && ws.readyState === WebSocket.OPEN) {
+          lastTriggerTime = now;
+          lastActiveIndex = rungIdx;
+          const rungCenterPitch = (rungIdx + 0.5) / noteCount;
+          ws.send(JSON.stringify({
+            type: "gesture",
+            pitch: rungCenterPitch,
+            cutoff: x,
+            velocity: Math.floor(80 + Math.random() * 35),
+            trigger: true,
+            gate: 1
+          }));
+
+          // Add particle explosion at index tip
+          for (let p = 0; p < 8; p++) {
+            trails.push({
+              x: indexTip.x * canvas.width,
+              y: indexTip.y * canvas.height,
+              vx: (Math.random() - 0.5) * 6,
+              vy: (Math.random() - 0.5) * 6,
+              life: 1.0,
+              size: Math.random() * 8 + 4
+            });
+          }
+        } else if (pinchReleased && ws && ws.readyState === WebSocket.OPEN) {
+          // Send gate 0 (release note when pinch opens)
+          ws.send(JSON.stringify({
+            type: "gesture",
+            pitch: y,
+            cutoff: x,
+            trigger: false,
+            gate: 0
+          }));
+        } else if (ws && ws.readyState === WebSocket.OPEN) {
+          // Send continuous position updates
+          ws.send(JSON.stringify({
+            type: "gesture",
+            pitch: y,
+            cutoff: x,
+            trigger: false
+          }));
+        }
+        wasPinched = isPinched;
+
+        // Draw glowing hand skeleton
+        drawHandSkeleton(landmarks, isPinched);
+
+        // Add to particle trail
+        trails.push({
+          x: indexTip.x * canvas.width,
+          y: indexTip.y * canvas.height,
+          vx: 0,
+          vy: 0,
+          life: 1.0,
+          size: 6
+        });
+      } else {
+        document.getElementById("val-pitch").textContent = "--";
+        const valPitchSub = document.getElementById("val-pitch-sub");
+        if (valPitchSub) valPitchSub.textContent = "--";
+        const valExprEl = document.getElementById("val-expression");
+        if (valExprEl) valExprEl.textContent = "--";
+        const barExprEl = document.getElementById("bar-expression");
+        if (barExprEl) barExprEl.style.width = "0%";
+        const valPinchEl = document.getElementById("val-pinch");
+        if (valPinchEl) valPinchEl.textContent = "--";
+        const barPinchEl = document.getElementById("bar-pinch");
+        if (barPinchEl) barPinchEl.style.width = "0%";
+        const badgeTriggerEl = document.getElementById("badge-trigger-state");
+        if (badgeTriggerEl) {
+          badgeTriggerEl.textContent = "IDLE";
+          badgeTriggerEl.style.color = "#38bdf8";
+        }
+        document.querySelectorAll(".pitch-rung").forEach(r => r.classList.remove("active"));
+        lastActiveIndex = -1;
+        if (wasPinched && ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: "gesture",
+            trigger: false,
+            gate: 0
+          }));
+        }
+        wasPinched = false;
+      }
+
+      // Draw particle trails
+      ctx.fillStyle = "#38bdf8";
+      for (let i = trails.length - 1; i >= 0; i--) {
+        const pt = trails[i];
+        pt.x += pt.vx;
+        pt.y += pt.vy;
+        pt.life -= 0.035;
+        if (pt.life <= 0) {
+          trails.splice(i, 1);
+          continue;
+        }
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, pt.size * pt.life, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(56, 189, 248, ${pt.life * 0.7})`;
+        ctx.shadowColor = "#38bdf8";
+        ctx.shadowBlur = 12;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+
+      ctx.restore();
+    }
+
+    function drawHandSkeleton(landmarks, isPinched) {
+      ctx.strokeStyle = isPinched ? "#f43f5e" : "rgba(56, 189, 248, 0.7)";
+      ctx.lineWidth = 3;
+      ctx.shadowColor = isPinched ? "#f43f5e" : "#38bdf8";
+      ctx.shadowBlur = 8;
+
+      const CONNECTIONS = [
+        [0, 1], [1, 2], [2, 3], [3, 4],
+        [0, 5], [5, 6], [6, 7], [7, 8],
+        [5, 9], [9, 10], [10, 11], [11, 12],
+        [9, 13], [13, 14], [14, 15], [15, 16],
+        [13, 17], [17, 18], [18, 19], [19, 20], [0, 17]
+      ];
+
+      for (const [s, e] of CONNECTIONS) {
+        ctx.beginPath();
+        ctx.moveTo(landmarks[s].x * canvas.width, landmarks[s].y * canvas.height);
+        ctx.lineTo(landmarks[e].x * canvas.width, landmarks[e].y * canvas.height);
+        ctx.stroke();
+      }
+
+      for (let i = 0; i < landmarks.length; i++) {
+        const lm = landmarks[i];
+        ctx.beginPath();
+        ctx.arc(lm.x * canvas.width, lm.y * canvas.height, (i === 8 || i === 4) ? 7 : 4, 0, Math.PI * 2);
+        ctx.fillStyle = isPinched ? "#f43f5e" : "#38bdf8";
+        ctx.fill();
+      }
+      ctx.shadowBlur = 0;
+    }
+
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.65,
+      minTrackingConfidence: 0.65
+    });
+
+    hands.onResults(onResults);
+
+    const camera = new Camera(video, {
+      onFrame: async () => {
+        await hands.send({ image: video });
+      },
+      width: 960,
+      height: 540
+    });
+
+    camera.start().catch((err) => {
+      console.error("Camera error:", err);
+      alert("Please allow camera access for gesture tracking.");
+    });
+  </script>
+</body>
+</html>
