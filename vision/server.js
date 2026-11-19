@@ -9,6 +9,7 @@ const path = require('path');
 const HTTP_PORT = 8080;
 const OSC_PORT = 8765;       // Send to Ableton M4L
 const FEEDBACK_PORT = 8001;   // Receive from Ableton M4L
+const TD_PORT = 7001;        // Mirror to TouchDesigner (optional visuals)
 const OSC_HOST = '127.0.0.1';
 
 const udpClient = dgram.createSocket('udp4');
@@ -72,6 +73,7 @@ function parseOsc(buffer) {
 
 function sendOsc(buffer) {
     udpClient.send(buffer, 0, buffer.length, OSC_PORT, OSC_HOST);
+    udpClient.send(buffer, 0, buffer.length, TD_PORT, OSC_HOST);
 }
 
 // Track active WebSocket clients
