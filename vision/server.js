@@ -20,6 +20,7 @@ let currentRoot = 0;
 let currentOctave = 0; // Default: 3rd octave
 let currentHold = 0;   // 0: Normal / decay, 1: Note Hold active
 let currentMode = 1;   // 1: Theremin, 0: Pinch Trigger
+let strikeCount = 0;   // increments on every note strike; lets TouchDesigner see repeated identical strikes
 
 function oscFloat(address, val) {
     let addr = Buffer.from(address + '\0');
@@ -203,6 +204,7 @@ server.on('upgrade', (req, socket, head) => {
                 if (msg.trigger) {
                     sendOsc(oscInt('/theremin/velocity', msg.velocity || 100));
                     sendOsc(oscInt('/theremin/trigger', 1));
+                    sendOsc(oscInt('/theremin/strike', ++strikeCount));
                 }
             } else if (msg.type === 'set_scale') {
                 currentScale = Number(msg.scale) || 0;
