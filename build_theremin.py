@@ -5,7 +5,7 @@ import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-M4L_COMMON = os.path.join(HERE, "..", "finishing-kit", "m4l")
+M4L_COMMON = os.path.join(HERE, "..", "common")
 if M4L_COMMON not in sys.path:
     sys.path.insert(0, M4L_COMMON)
 
